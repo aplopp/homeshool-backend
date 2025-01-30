@@ -2,6 +2,8 @@ const express = require('express');
 const axios = require('axios');
 const cors = require('cors')
 const { OpenAI } = require("openai");
+const NodeCache = require("node-cache");
+const cache = new NodeCache({ stdTTL: 60, checkperiod: 120 });
 
 require('dotenv').config();
 
@@ -23,16 +25,21 @@ app.use(cors({
   }
 }));
 
-const getCelebrationsForDay = async (datestring) => {
-  
+const getLiturgicalDayInformation = async (datestring) => {
+  const cacheKey = "celebrations-"+datestring;
+	const cached_response = cache.get(cacheKey);
+
+	if (cached_response) {
+    return cached_response;
+  }
   // Make a request to the non-HTTP endpoint
   try {
     const matches = datestring.match(/(\d{2})-(\d{2})-(\d{4})/);
     const urlDatestring = `${ matches[3] }/${ matches[1]}/${ matches[2]}`;
     const apiUrl = `http://calapi.inadiutorium.cz/api/v0/en/calendars/general-en/${ urlDatestring }`;
     const response = await axios.get(apiUrl);
-    const celebrations = response.data.celebrations;
-    return celebrations;
+    cache.set(cacheKey, response.data);
+    return response.data;
   } catch (error) {
     console.error('error fetching liturgical day data');
     return {};
@@ -41,16 +48,30 @@ const getCelebrationsForDay = async (datestring) => {
 const PORT = process.env.PORT || 3000;
 app.get('/liturgical-calendar/:datestring([0-9]{2}-[0-9]{2}-[0-9]{4})/description', async (req, res) => {
 	const datestring = req.params.datestring;
-  const celebrations = await getCelebrationsForDay(datestring);
-  const prompt = `Given the following liturgical calendar information,`
-    + ` write me a two paragraph summary of the day's celebration,`
-    + ` suitable for homeschool, ages 6-12: `
-    + `${ JSON.stringify(celebrations) }`
-    + `\nThen, if possible, briefly share one notable story from the saint's life.`;
-    + `\nNo other output. `;
-    + `\nIf no saint today, reply "No saint for '${ datestring }`;
 
+  const cacheKey = "celebration-description-"+datestring;
+	const cached_output = cache.get(cacheKey);
+
+	if (cached_output) {
+    res.status(200).json(cached_output);
+    return;
+  }
+  const dayInfo = await getLiturgicalDayInformation(datestring);
+  const celebrations = dayInfo?.celebrations;
+  if ( !celebrations || celebrations.length === 0 ){
+    res.status(200).json(`No celebrations for ${ datestring }`);
+    return;
+  }
   try {
+      
+      const prompt = `Given the following liturgical calendar information,`
+        + ` write me a two paragraph summary of the day's celebration,`
+        + ` suitable for homeschool, ages 6-12: `
+        + `${ JSON.stringify(celebrations) }`
+        + `\nThen, if possible, briefly share one notable story from the saint's life.`;
+        + `\nNo other output. `;
+        + `\nSpeak from a devout conservative Catholic perspective.`;
+        + `\nIf no saint today, reply "No saint for '${ datestring }`;
       const stream = await openai.chat.completions.create({
           model: "gpt-4o-mini",
           messages: [{ role: "user", content: prompt }],
@@ -62,6 +83,7 @@ app.get('/liturgical-calendar/:datestring([0-9]{2}-[0-9]{2}-[0-9]{4})/descriptio
           process.stdout.write(chunk.choices[0]?.delta?.content || "");
           output += (chunk.choices[0]?.delta?.content || "");
       }
+      cache.set(cacheKey, output);
       res.status(200).json(output);
   } catch (error) {
       console.error('Error calling OpenAI API:', error);
@@ -69,14 +91,12 @@ app.get('/liturgical-calendar/:datestring([0-9]{2}-[0-9]{2}-[0-9]{4})/descriptio
   }
 });
 // Proxy endpoint
-app.get('/liturgical-calendar/:datestring([0-9]{2}-[0-9]{2}-[0-9]{4})', async (req, res) => {
-  const datestring = req.params[0];
-
+app.get('/liturgical-calendar/:datestring([0-9]{2}-[0-9]{2}-[0-9]{4})/', async (req, res) => {
+  const datestring = req.params.datestring;
   try {
-    const saint = await getSaintForDay(datestring);
+    const info = await getLiturgicalDayInformation(datestring);
     // Forward the response back to the client
-    res.json(saint);
-    // res.status(200).send(`http://calapi.inadiutorium.cz/api/v0/en/calendars/general-en/${ requestedEndpoint }`)
+    res.json(info);
   } catch (error) {
     console.error('Error while proxying:', error);
     res.status(500).send('Error proxying request.');
