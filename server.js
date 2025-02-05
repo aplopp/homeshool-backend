@@ -65,10 +65,11 @@ app.get('/liturgical-calendar/:datestring([0-9]{2}-[0-9]{2}-[0-9]{4})/descriptio
   try {
       
       const prompt = `Given the following liturgical calendar information,`
-        + ` write me a two paragraph summary of the day's celebration,`
+        + ` write me a encyclopedia summary of the day's celebration, with dates and specific details,`
         + ` suitable for homeschool, ages 6-12: `
         + `${ JSON.stringify(celebrations) }`
         + `\nThen, if possible, briefly share one notable story from the saint's life.`;
+        + `\nAvoid theorizing about what we can learn from the saint.`;
         + `\nNo other output. `;
         + `\nSpeak from a devout conservative Catholic perspective.`;
         + `\nIf no saint today, reply "No saint for '${ datestring }`;
